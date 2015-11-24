@@ -7,6 +7,7 @@
 #include <sys/file.h>
 #include <unistd.h>
 #include "parameters.h"
+#include "correct_rate.h"
 
 const unsigned int max_epochs = 50000;
 const unsigned int terminate_if_no_better = 5000;
@@ -17,9 +18,11 @@ const double desired_error = 0.000;
 
 struct fann_train_data *data = NULL;
 struct fann_train_data *train = NULL;
-struct fann_train_data *cv_test = NULL;
 
+struct fann_train_data *cv_test = NULL;
 double best_test_error[num_cross_validation];
+double prate[num_cross_validation];
+double nrate[num_cross_validation];
 int best_epoch[num_cross_validation];
 fann_type *weights[num_cross_validation];
 int current_cv;
@@ -70,12 +73,22 @@ int FANN_API test_callback(struct fann *ann, struct fann_train_data *train,
 		best_epoch[current_cv] = epochs;
 		best_test_error[current_cv] = error;
 		fann_get_weights(ann,weights[current_cv]);
+		// also keep track on prate and nrate
+		int countpp = 0;
+		int countpn = 0;
+		int countnp = 0;
+		int countnn = 0;
+		corret_rate(cpy,cv_test,num_train/num_cross_validation,&countpp,&countpn,&countnp,&countnn,0);
+		prate[current_cv] = ((double)countpp)/(countpp+countpn);
+		nrate[current_cv] = ((double)countnn)/(countnp+countnn);
 	}
 	fann_destroy(cpy);
 	if(epochs%epochs_between_prints==0)
 		printf("CV: %d, Epochs: %u, train error: %lf, test error: %lf, best error: %lf\n",current_cv,epochs,fann_get_MSE(ann),error,best_test_error[current_cv]);
 	if(epochs-best_epoch[current_cv] > terminate_if_no_better){
 		printf("no improve for %u epochs, terminate\n",terminate_if_no_better);
+		printf("+ correct rate: %f%%\n",100.0*prate[current_cv]);
+		printf("- correct rate: %f%%\n",100.0*nrate[current_cv]);
 		return -1;
 	}
 }
@@ -124,19 +137,16 @@ double cross_validation(struct fann *ann, struct fann_train_data *data){
 		error += errors[i];
 	error /= num_cross_validation;
 	
-	// if better put best cross validation weights to ann
-	double best_error = load_best();
-	if(error < best_error){
-		int bestidx = 0;
-		double besterr = 999;
-		for(int i=0;i<num_cross_validation;i++){
-			if(best_test_error[i]<besterr){
-				bestidx = i;
-				besterr = best_test_error[i];
-			}
+	// put best cross validation weights to ann
+	int bestidx = 0;
+	double besterr = 999;
+	for(int i=0;i<num_cross_validation;i++){
+		if(best_test_error[i]<besterr){
+			bestidx = i;
+			besterr = best_test_error[i];
 		}
-		fann_set_weights(ann,weights[bestidx]);
 	}
+	fann_set_weights(ann,weights[bestidx]);
 	
 	// cleanup
 	for(int i=0;i<num_cross_validation;i++){
@@ -149,26 +159,15 @@ double cross_validation(struct fann *ann, struct fann_train_data *data){
 	return error;
 }
 
-void save(double err,struct fann *ann){
+void save(struct fann *ann,char *fn){
 	// save best error
-	FILE *fp = fopen("best.txt","r+");
-	int fd = fileno(fp);
-	flock(fd,LOCK_EX);
-	
-	double best_error;
-	int ret1 = fscanf(fp,"%lf",&best_error);
-	if(err<best_error){
-		fseek(fp,0,SEEK_SET);
-		int ret2 = ftruncate(fd,0);
-		fprintf(fp,"%lf",err);
-		fann_save(ann, "best.net");
-	}
-	
-	flock(fd,LOCK_UN);
-	fclose(fp);
+	for(int i=0;i<num_cross_validation;i++)
+		if(prate[i]<0.9||nrate[i]<0.9)
+			return;
+	fann_save(ann,fn);
 }
 
-void doall(){
+void doall(char *fn){
 	srand(time(NULL));
 	init_data();
 	
@@ -177,7 +176,7 @@ void doall(){
 	fflush(stdout);
 	
 	double new_error = cross_validation(ann,train);
-	save(new_error,ann);
+	save(ann,fn);
 	
 	// end of program
 	cleanup();

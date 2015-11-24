@@ -19,6 +19,6 @@ struct fann *random_network(){
 int main(int argc, char *argv[])
 {
 	num_hidden_nodes = atoi(argv[1]);
-	doall();
+	doall(argv[1]);
 	return 0;
 }

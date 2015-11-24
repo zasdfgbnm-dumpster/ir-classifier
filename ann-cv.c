@@ -46,6 +46,6 @@ struct fann *random_network(){
 
 int main(int argc, char *argv[])
 {
-	doall();
+	doall(argv[1]);
 	return 0;
 }
